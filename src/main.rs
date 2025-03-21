@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use args::Project4;
 use clap::Parser;
 use setup::{hostsfile::PeerList, socketry::Nexus};
@@ -20,5 +18,9 @@ async fn main() -> std::io::Result<()> {
     let nexus = Nexus::new(&peer_list).await;
 
     let mut data = Data::new(peer_list, nexus);
-    loop {}
+    data.send_msg(messaging::Message::Living).await?;
+    loop {
+        // testing testing
+        data.tick();
+    }
 }

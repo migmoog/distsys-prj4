@@ -15,6 +15,7 @@ use tokio::{
 pub enum Message {
     // Sent by a peer once it establishes a connection
     Alive,
+    Living,
 }
 
 // Message with an address

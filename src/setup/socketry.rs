@@ -1,9 +1,12 @@
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::{
     collections::HashMap, future::Future, net::ToSocketAddrs, thread::sleep, time::Duration,
 };
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{self, AsyncReadExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::select;
 
 use crate::messaging::{dist_types::PeerId, Letter, Message};
 
@@ -12,8 +15,7 @@ const TCP_PORT: &str = "6969";
 
 // Responsible for managing all receiving and sending of messages
 pub struct Nexus {
-    // Streams created by a TcpListener
-    incoming: HashMap<PeerId, TcpStream>,
+    rec_incoming: Receiver<Letter>,
     // Streams made by TcpStream::connect
     outgoing: HashMap<PeerId, TcpStream>,
 }
@@ -60,20 +62,49 @@ impl Nexus {
             }
         }
 
-        // organize these anonymous socks based on their alive messages
-        let mut incoming = HashMap::new();
+        // Check for signs of life off our connections and give their own threads for polling
+        let (send, rec_incoming) = channel();
         for mut sock in anon_socks {
             let mut buf = [0; 1024];
             if let Ok(bytes_read) = sock.read(&mut buf).await {
                 let letter: Letter =
                     bincode::deserialize(&buf[..bytes_read]).expect("Deserializeable");
-                if matches!(letter.message(), Message::Alive) {
-                    incoming.insert(letter.from(), sock);
-                }
+                // shouldnt get any other message
+                assert!(matches!(letter.message(), Message::Alive));
+
+                // once we know our peer is alive, move the stream into its own async
+                // thread where you can poll it for all eternity
+                let send = send.clone();
+                tokio::spawn(async move {
+                    let mut buffer = [0; 1024];
+
+                    loop {
+                        if let Ok(bytes_read) = sock.read(&mut buffer).await {
+                            let l: Letter =
+                                bincode::deserialize(&buffer[..bytes_read]).expect("Full Message");
+                            send.send(l).expect("Successful send");
+                        }
+                    }
+                });
             }
         }
 
-        // waiting for "I am alive messages"
-        Self { incoming, outgoing }
+        Self {
+            outgoing,
+            rec_incoming,
+        }
+    }
+
+    /// Polls for letters
+    pub fn check_mailbox(&self) -> Option<Letter> {
+        self.rec_incoming.try_recv().ok()
+    }
+
+    pub async fn send_letter(&mut self, letter: Letter) -> io::Result<()> {
+        let to = letter.to();
+        if let Some(sock) = self.outgoing.get_mut(&to) {
+            letter.send(sock).await?;
+        }
+        Ok(())
     }
 }
