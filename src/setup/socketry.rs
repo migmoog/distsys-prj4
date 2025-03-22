@@ -1,12 +1,9 @@
-use std::sync::mpsc::{channel, Receiver};
-use std::sync::Arc;
-use std::{
-    collections::HashMap, future::Future, net::ToSocketAddrs, thread::sleep, time::Duration,
-};
+use core::panic;
+use std::{collections::HashMap, future::Future, thread::sleep, time::Duration};
 
 use tokio::io::{self, AsyncReadExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::select;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 use crate::messaging::{dist_types::PeerId, Letter, Message};
 
@@ -15,7 +12,7 @@ const TCP_PORT: &str = "6969";
 
 // Responsible for managing all receiving and sending of messages
 pub struct Nexus {
-    rec_incoming: Receiver<Letter>,
+    rec_incoming: UnboundedReceiver<Letter>,
     // Streams made by TcpStream::connect
     outgoing: HashMap<PeerId, TcpStream>,
 }
@@ -63,7 +60,7 @@ impl Nexus {
         }
 
         // Check for signs of life off our connections and give their own threads for polling
-        let (send, rec_incoming) = channel();
+        let (send, rec_incoming) = unbounded_channel();
         for mut sock in anon_socks {
             let mut buf = [0; 1024];
             if let Ok(bytes_read) = sock.read(&mut buf).await {
@@ -82,6 +79,7 @@ impl Nexus {
                         if let Ok(bytes_read) = sock.read(&mut buffer).await {
                             let l: Letter =
                                 bincode::deserialize(&buffer[..bytes_read]).expect("Full Message");
+                            println!("Got letter {:?}", l);
                             send.send(l).expect("Successful send");
                         }
                     }
@@ -96,7 +94,7 @@ impl Nexus {
     }
 
     /// Polls for letters
-    pub fn check_mailbox(&self) -> Option<Letter> {
+    pub fn check_mailbox(&mut self) -> Option<Letter> {
         self.rec_incoming.try_recv().ok()
     }
 
@@ -104,6 +102,8 @@ impl Nexus {
         let to = letter.to();
         if let Some(sock) = self.outgoing.get_mut(&to) {
             letter.send(sock).await?;
+        } else {
+            panic!("DOESNT EXIST");
         }
         Ok(())
     }

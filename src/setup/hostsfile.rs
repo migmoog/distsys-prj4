@@ -7,40 +7,50 @@ use nom::{
     sequence::separated_pair,
     IResult, Parser,
 };
-use std::{collections::HashMap, fs::File, io::Read, ops::Index, path::PathBuf};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs::File,
+    hash::Hash,
+    io::Read,
+    path::PathBuf,
+};
 
-use crate::messaging::dist_types::PeerId;
+use crate::{
+    messaging::dist_types::PeerId,
+    state::paxos::{Accepting, Learning, PaxosRole, PaxosStage, Proposing},
+};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Proposer(u32),
     Acceptor(u32),
     Learner(u32),
 }
-impl Role {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (input, role_type) = alpha1(input)?;
-        let (input, id) = map_res(digit1, |s: &str| s.parse::<u32>()).parse(input)?;
+fn parse_roleid(input: &str) -> IResult<&str, Role> {
+    let (input, role_type) = alpha1(input)?;
+    let (input, id) = map_res(digit1, |s: &str| s.parse::<u32>()).parse(input)?;
 
-        let role = match role_type {
-            "proposer" => Self::Proposer,
-            "acceptor" => Self::Acceptor,
-            "learner" => Self::Learner,
-            _ => {
-                return Err(nom::Err::Error(nom::error::Error::new(
-                    input,
-                    nom::error::ErrorKind::Tag,
-                )));
-            }
-        }(id);
+    let role = match role_type {
+        "proposer" => Role::Proposer,
+        "acceptor" => Role::Acceptor,
+        "learner" => Role::Learner,
+        _ => {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
+    }(id);
 
-        Ok((input, role))
-    }
+    Ok((input, role))
 }
-fn parse_roles(input: &str) -> IResult<&str, Vec<Role>> {
-    separated_list1(tag(","), Role::parse).parse(input)
+
+fn parse_roles(input: &str) -> IResult<&str, VecDeque<Role>> {
+    separated_list1(tag(","), parse_roleid)
+        .parse(input)
+        .map(|(input, vec)| (input, vec.into()))
 }
-fn make_roles<'a>(input: &'a str) -> IResult<&'a str, IndexMap<String, Vec<Role>>> {
+fn make_roles<'a>(input: &'a str) -> IResult<&'a str, IndexMap<String, VecDeque<Role>>> {
     let mut key_values = separated_pair(take_until(":"), tag(":"), parse_roles);
     let mut out = IndexMap::new();
     for line in input.lines() {
@@ -53,7 +63,7 @@ fn make_roles<'a>(input: &'a str) -> IResult<&'a str, IndexMap<String, Vec<Role>
 /// Helper to keep track of whos who
 #[derive(Debug)]
 pub struct PeerList {
-    peer_names: IndexMap<String, Vec<Role>>,
+    peer_names: IndexMap<String, VecDeque<Role>>,
     hostname: String,
 }
 impl PeerList {
@@ -83,15 +93,56 @@ impl PeerList {
             .expect("Host should be in hostsfile")
             + 1
     }
+
+    /// Returns an iterator going to all of this process' acceptors
+    pub fn acceptors(&self, num: PaxosStage) -> Vec<PeerId> {
+        // welcome to ITER CHAIN HELL! 🔥💀🔥
+        self.peer_names
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, (_, roles))| {
+                if roles.contains(&Role::Acceptor(num)) {
+                    Some(index + 1)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Returns iterator of all peer Ids and their names
     pub fn ids_and_names(&self) -> impl Iterator<Item = (PeerId, &String)> {
         self.peer_names
             .keys()
-            .filter(|name| **name != self.hostname)
             .enumerate()
             .map(|(index, name)| (index + 1, name))
+            .filter(|(_, name)| **name != self.hostname)
     }
 
+    /// Returns the number of peers this one is connected to
     pub fn peers_count(&self) -> usize {
         self.peer_names.len() - 1
+    }
+
+    pub fn establish_stages(&self) -> HashMap<PaxosStage, PaxosRole> {
+        let roles = self
+            .peer_names
+            .get(&self.hostname)
+            .expect("Host in hostsfile");
+        let mut out = HashMap::new();
+        for r in roles.iter() {
+            match r {
+                Role::Proposer(stage_num) => {
+                    out.insert(*stage_num, PaxosRole::Prop(Proposing::default()));
+                }
+                Role::Acceptor(stage_num) => {
+                    out.insert(*stage_num, PaxosRole::Acc(Accepting::default()));
+                }
+                Role::Learner(stage_num) => {
+                    out.insert(*stage_num, PaxosRole::Learn(Learning));
+                }
+            }
+        }
+        out
     }
 }

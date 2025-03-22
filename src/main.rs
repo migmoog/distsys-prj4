@@ -10,17 +10,21 @@ mod state;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let args = Project4::parse();
+    let arguments = Project4::parse();
 
     // hostsfile reader that can give us information about peers
-    let peer_list = PeerList::load(args.hostsfile)?;
+    let peer_list = PeerList::load(arguments.hostsfile)?;
     // collection of the incoming and outgoing channels to peers
     let nexus = Nexus::new(&peer_list).await;
 
     let mut data = Data::new(peer_list, nexus);
-    data.send_msg(messaging::Message::Living).await?;
     loop {
-        // testing testing
+        if let Some(value) = arguments.proposal_value {
+            if data.can_propose() {
+                data.propose(value).await?;
+            }
+        }
+
         data.tick();
     }
 }

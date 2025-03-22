@@ -10,12 +10,14 @@ use tokio::{
     net::TcpStream,
 };
 
+use crate::state::paxos::Proposal;
+
 // Type of message being sent
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
     // Sent by a peer once it establishes a connection
     Alive,
-    Living,
+    Prepare(Proposal),
 }
 
 // Message with an address

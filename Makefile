@@ -4,7 +4,7 @@ j.%: prj4
 	docker compose -f jeremy_tests/$*.yml up
 
 comp%: prj4
-	docker compose -f testcases/docker-compose-testcase-$*.yml up
+	docker compose -f testcases/docker-compose-testcase-$*.yml up --remove-orphans
 
 prj4:
 	docker build . -t $@
