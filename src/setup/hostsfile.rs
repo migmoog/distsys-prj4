@@ -149,4 +149,18 @@ impl PeerList {
             })
             .expect("Should have a proposer")
     }
+
+    pub fn acceptors_and_learners(&self, num: PaxosStage) -> Vec<PeerId> {
+        self.peer_names
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, (_, roles))| {
+                if roles.contains(&Role::Acceptor(num)) || roles.contains(&Role::Learner(num)) {
+                    Some(index + 1)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }

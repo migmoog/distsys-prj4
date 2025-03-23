@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +15,8 @@ pub type PaxosStage = u32;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Proposal {
-    num: ProposalNum,
-    value: Value,
+    pub num: ProposalNum,
+    pub value: Value,
 }
 
 #[derive(Default)]
@@ -25,20 +25,29 @@ pub struct Proposing {
     value: Option<Value>,
     prep_acks: HashMap<PeerId, Option<Proposal>>,
     broadcasted_accept: bool,
-    accept_acks: HashSet<PeerId>,
+    accept_acks: HashMap<PeerId, ProposalNum>,
     quorum_size: usize,
+    chosen: bool,
 }
 impl Proposing {
     pub fn new(quorum_size: usize) -> Self {
         Self {
             quorum_size,
             broadcasted_accept: false,
+            chosen: false,
             ..Default::default()
         }
     }
     /// Returns true if we have proposed a value
     pub fn has_begun(&self) -> bool {
         self.value.is_some()
+    }
+
+    pub fn current_prop(&self) -> Proposal {
+        Proposal {
+            num: self.num,
+            value: self.value.expect("Dont mess this up"),
+        }
     }
 
     /// Sets proposal value and increments proposal number
@@ -60,6 +69,7 @@ impl Proposing {
         &mut self,
         from: PeerId,
         response: Option<Proposal>,
+        id: PeerId,
     ) -> Option<Message> {
         self.prep_acks.insert(from, response);
 
@@ -76,14 +86,56 @@ impl Proposing {
             }
 
             self.broadcasted_accept = true;
-            Some(Message::Accept(Proposal {
+            let accept_msg = Message::Accept(Proposal {
                 num: self.num,
                 value: self.value?,
-            }))
+            });
+            accept_msg.paxos_print(id, true, &self.current_prop());
+            Some(accept_msg)
         } else {
             None
         }
     }
+
+    pub fn acknowledge_accept(
+        &mut self,
+        from: PeerId,
+        min_proposal: ProposalNum,
+        id: PeerId,
+    ) -> Option<Message> {
+        if self.chosen {
+            return None;
+        }
+        self.accept_acks.insert(from, min_proposal);
+
+        // we got a rejection, abort!
+        if min_proposal > self.num {
+            self.num = min_proposal + 1;
+            let redo_prep = Message::Prepare(Proposal {
+                num: self.num,
+                value: self.value?,
+            });
+            redo_prep.paxos_print(id, true, &self.current_prop());
+            return Some(redo_prep);
+        }
+
+        if self.accept_acks.len() > self.quorum_size / 2 && !self.chosen {
+            self.chosen = true;
+            let chose_msg = Message::Chosen(Proposal {
+                num: self.num,
+                value: self.value?,
+            });
+            chose_msg.paxos_print(id, true, &self.current_prop());
+
+            Some(chose_msg)
+        } else {
+            None
+        }
+    }
+}
+
+pub trait Chooser {
+    fn accept_choice(&mut self, prop: &Proposal);
 }
 
 #[derive(Default)]
@@ -92,17 +144,51 @@ pub struct Accepting {
     accepted_prop: Option<Proposal>,
 }
 impl Accepting {
-    pub fn prepare(&mut self, prop: &Proposal) -> Message {
+    pub fn prepare(&mut self, prop: &Proposal, id: PeerId) -> Message {
         // if n > minProposal then minProposal = n
         self.min_proposal = self.min_proposal.max(prop.num);
-        Message::PrepareAck(self.accepted_prop.clone())
+        let msg = Message::PrepareAck(self.accepted_prop.clone());
+        msg.paxos_print(id, true, prop);
+        msg
+    }
+
+    pub fn accept(&mut self, prop: &Proposal, id: PeerId) -> Message {
+        if prop.num > self.min_proposal {
+            self.min_proposal = prop.num;
+            self.accepted_prop = Some(prop.clone());
+        }
+        let msg = Message::AcceptAck {
+            min_proposal: self.min_proposal,
+        };
+
+        msg.paxos_print(id, true, prop);
+        msg
+    }
+}
+impl Chooser for Accepting {
+    fn accept_choice(&mut self, _prop: &Proposal) {
+        println!("Also chosen");
     }
 }
 
 pub struct Learning;
+impl Chooser for Learning {
+    fn accept_choice(&mut self, _prop: &Proposal) {
+        println!("Chosen");
+    }
+}
 
 pub enum PaxosRole {
     Prop(Proposing),
     Acc(Accepting),
     Learn(Learning),
+}
+impl Chooser for PaxosRole {
+    fn accept_choice(&mut self, prop: &Proposal) {
+        match self {
+            Self::Acc(a) => a.accept_choice(prop),
+            Self::Learn(l) => l.accept_choice(prop),
+            _ => {}
+        }
+    }
 }

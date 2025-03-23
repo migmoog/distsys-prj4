@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use paxos::{PaxosRole, PaxosStage, Value};
+use paxos::{Chooser, PaxosRole, PaxosStage, Value};
 use tokio::io;
 
 use crate::{
@@ -52,13 +52,14 @@ impl Data {
     pub async fn propose(&mut self, v: Value) -> io::Result<()> {
         let mut to_send = None;
         if let Some(PaxosRole::Prop(ref mut p)) = self.stages.get_mut(&self.current_stage) {
-            to_send = Some(p.propose(v));
+            let msg = p.propose(v);
+            msg.paxos_print(self.peer_list.id(), true, &p.current_prop());
+            to_send = Some(msg);
         }
 
         if let Some(msg) = to_send {
             for id in self.peer_list.acceptors(self.current_stage) {
                 self.send_msg(msg.clone(), id).await?;
-                println!("sent a {:?} to {id}", msg);
             }
         }
         Ok(())
@@ -73,19 +74,40 @@ impl Data {
             return;
         };
 
-        match (letter.message(), paxos_role) {
+        let id = self.peer_list.id();
+        let recmsg = letter.message();
+        match (recmsg, paxos_role) {
             (Message::Prepare(prop), PaxosRole::Acc(ref mut acc)) => {
-                let msg = acc.prepare(prop);
+                recmsg.paxos_print(id, false, prop);
+
+                let msg = acc.prepare(prop, id);
                 self.log.push_back(msg);
             }
 
             (Message::PrepareAck(response), PaxosRole::Prop(ref mut prop)) => {
-                if let Some(msg) = prop.acknowledge_prep(letter.from(), response.clone()) {
+                recmsg.paxos_print(id, false, &prop.current_prop());
+
+                if let Some(msg) = prop.acknowledge_prep(letter.from(), response.clone(), id) {
                     self.log.push_back(msg);
                 }
             }
+
             (Message::Accept(prop), PaxosRole::Acc(ref mut acceptor)) => {
-                println!("OK!");
+                recmsg.paxos_print(id, false, prop);
+                let msg = acceptor.accept(prop, id);
+                self.log.push_back(msg);
+            }
+
+            (Message::AcceptAck { min_proposal }, PaxosRole::Prop(ref mut proposer)) => {
+                recmsg.paxos_print(id, false, &proposer.current_prop());
+                if let Some(msg) = proposer.acknowledge_accept(letter.from(), *min_proposal, id) {
+                    self.log.push_back(msg);
+                }
+            }
+
+            (Message::Chosen(prop), role) => {
+                recmsg.paxos_print(id, false, prop);
+                role.accept_choice(prop);
             }
             _ => unreachable!("These messages should only be sent by their accompanying roles"),
         }
@@ -97,18 +119,24 @@ impl Data {
         };
 
         match &msg {
-            Message::PrepareAck(_) => {
-                println!("Responding to Prepare {:?}", msg);
+            Message::PrepareAck(_) | Message::AcceptAck { .. } => {
                 self.send_msg(msg, self.peer_list.proposer(self.current_stage))
                     .await?
             }
 
             Message::Accept(_) => {
-                println!("Time to accept!");
                 for id in self.peer_list.acceptors(self.current_stage) {
                     self.send_msg(msg.clone(), id).await?;
                 }
             }
+
+            Message::Chosen(_) => {
+                for id in self.peer_list.acceptors_and_learners(self.current_stage) {
+                    self.send_msg(msg.clone(), id).await?;
+                }
+            }
+
+            Message::Prepare(_) => {}
             _ => {}
         }
         Ok(())

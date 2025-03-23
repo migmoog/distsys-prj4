@@ -21,6 +21,35 @@ pub enum Message {
     PrepareAck(Option<Proposal>),
     Accept(Proposal),
     AcceptAck { min_proposal: ProposalNum },
+    Chosen(Proposal),
+}
+impl Message {
+    /// Prints according to project specs for sending and receiving messages
+    pub fn paxos_print(&self, id: PeerId, sent: bool, prop: &Proposal) {
+        let message_type = match self {
+            Self::Prepare(_) => "prepare",
+            Self::PrepareAck(_) => "prepare_ack",
+            Self::Accept(_) => "accept",
+            Self::AcceptAck { .. } => "accept_ack",
+            Self::Chosen(_) => "chose",
+            _ => return,
+        }
+        .to_string();
+
+        let action = if let Self::Chosen(_) = self {
+            "chose"
+        } else if sent {
+            "sent"
+        } else {
+            "received"
+        }
+        .to_string();
+
+        eprint!(
+            "{{\"peer_id\": {id}, \"action\": \"{action}\", \"message_type\": \"{message_type}\", \"message_value\": \"{}\", \"proposal_num\": {}}}\n",
+            prop.value, prop.num
+        );
+    }
 }
 
 // Message with an address
