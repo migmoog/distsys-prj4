@@ -75,13 +75,19 @@ impl Data {
 
         match (letter.message(), paxos_role) {
             (Message::Prepare(prop), PaxosRole::Acc(ref mut acc)) => {
-                let msg = acc.accept(prop);
+                let msg = acc.prepare(prop);
                 self.log.push_back(msg);
             }
-            (Message::PrepareAck(maybe_prop), PaxosRole::Prop(ref mut prop)) => {
-                //    let msg = prop.acknowledge(maybe_prop);
+
+            (Message::PrepareAck(response), PaxosRole::Prop(ref mut prop)) => {
+                if let Some(msg) = prop.acknowledge_prep(letter.from(), response.clone()) {
+                    self.log.push_back(msg);
+                }
             }
-            _ => {}
+            (Message::Accept(prop), PaxosRole::Acc(ref mut acceptor)) => {
+                println!("OK!");
+            }
+            _ => unreachable!("These messages should only be sent by their accompanying roles"),
         }
     }
 
@@ -95,6 +101,13 @@ impl Data {
                 println!("Responding to Prepare {:?}", msg);
                 self.send_msg(msg, self.peer_list.proposer(self.current_stage))
                     .await?
+            }
+
+            Message::Accept(_) => {
+                println!("Time to accept!");
+                for id in self.peer_list.acceptors(self.current_stage) {
+                    self.send_msg(msg.clone(), id).await?;
+                }
             }
             _ => {}
         }

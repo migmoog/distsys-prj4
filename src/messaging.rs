@@ -10,7 +10,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::state::paxos::Proposal;
+use crate::state::paxos::{Proposal, ProposalNum};
 
 // Type of message being sent
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -19,6 +19,8 @@ pub enum Message {
     Alive,
     Prepare(Proposal),
     PrepareAck(Option<Proposal>),
+    Accept(Proposal),
+    AcceptAck { min_proposal: ProposalNum },
 }
 
 // Message with an address

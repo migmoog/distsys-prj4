@@ -77,9 +77,9 @@ impl Nexus {
 
                     loop {
                         if let Ok(bytes_read) = sock.read(&mut buffer).await {
+                            assert!(bytes_read > 0);
                             let l: Letter =
                                 bincode::deserialize(&buffer[..bytes_read]).expect("Full Message");
-                            println!("Got letter {:?}", l);
                             send.send(l).expect("Successful send");
                         }
                     }

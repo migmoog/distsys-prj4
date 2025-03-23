@@ -130,7 +130,10 @@ impl PeerList {
             .expect("Host in hostsfile")
             .iter()
             .map(|r| match r {
-                Role::Proposer(stage_num) => (*stage_num, PaxosRole::Prop(Proposing::default())),
+                Role::Proposer(stage_num) => (
+                    *stage_num,
+                    PaxosRole::Prop(Proposing::new(self.acceptors(*stage_num).len())),
+                ),
                 Role::Acceptor(stage_num) => (*stage_num, PaxosRole::Acc(Accepting::default())),
                 Role::Learner(stage_num) => (*stage_num, PaxosRole::Learn(Learning)),
             })
