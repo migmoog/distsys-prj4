@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use paxos::{PaxosRole, PaxosStage, Value};
 use tokio::io;
@@ -17,6 +17,7 @@ pub struct Data {
     // Paxos stuff
     current_stage: PaxosStage,
     stages: HashMap<PaxosStage, PaxosRole>,
+    log: VecDeque<Message>,
 }
 
 impl Data {
@@ -27,6 +28,7 @@ impl Data {
             nexus,
             current_stage: 1,
             stages,
+            log: VecDeque::new(),
         }
     }
 
@@ -64,9 +66,38 @@ impl Data {
 
     // checks the mailbox and does according data trickery
     pub fn tick(&mut self) {
-        if let Some(letter) = self.nexus.check_mailbox() {
-            println!("{letter:?}");
-            // COOL!
+        let (Some(letter), Some(paxos_role)) = (
+            self.nexus.check_mailbox(),
+            self.stages.get_mut(&self.current_stage),
+        ) else {
+            return;
+        };
+
+        match (letter.message(), paxos_role) {
+            (Message::Prepare(prop), PaxosRole::Acc(ref mut acc)) => {
+                let msg = acc.accept(prop);
+                self.log.push_back(msg);
+            }
+            (Message::PrepareAck(maybe_prop), PaxosRole::Prop(ref mut prop)) => {
+                //    let msg = prop.acknowledge(maybe_prop);
+            }
+            _ => {}
         }
+    }
+
+    pub async fn flush_log(&mut self) -> io::Result<()> {
+        let Some(msg) = self.log.pop_front() else {
+            return Ok(());
+        };
+
+        match &msg {
+            Message::PrepareAck(_) => {
+                println!("Responding to Prepare {:?}", msg);
+                self.send_msg(msg, self.peer_list.proposer(self.current_stage))
+                    .await?
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }

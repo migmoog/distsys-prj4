@@ -43,8 +43,15 @@ impl Proposing {
 
 #[derive(Default)]
 pub struct Accepting {
-    min_proposal: Option<ProposalNum>,
-    accepted_proposal: Option<(ProposalNum, Value)>,
+    min_proposal: ProposalNum,
+    accepted_prop: Option<Proposal>,
+}
+impl Accepting {
+    pub fn accept(&mut self, prop: &Proposal) -> Message {
+        // if n > minProposal then minProposal = n
+        self.min_proposal = self.min_proposal.max(prop.num);
+        Message::PrepareAck(self.accepted_prop.clone())
+    }
 }
 
 pub struct Learning;

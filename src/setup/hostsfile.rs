@@ -125,24 +125,25 @@ impl PeerList {
     }
 
     pub fn establish_stages(&self) -> HashMap<PaxosStage, PaxosRole> {
-        let roles = self
-            .peer_names
+        self.peer_names
             .get(&self.hostname)
-            .expect("Host in hostsfile");
-        let mut out = HashMap::new();
-        for r in roles.iter() {
-            match r {
-                Role::Proposer(stage_num) => {
-                    out.insert(*stage_num, PaxosRole::Prop(Proposing::default()));
-                }
-                Role::Acceptor(stage_num) => {
-                    out.insert(*stage_num, PaxosRole::Acc(Accepting::default()));
-                }
-                Role::Learner(stage_num) => {
-                    out.insert(*stage_num, PaxosRole::Learn(Learning));
-                }
-            }
-        }
-        out
+            .expect("Host in hostsfile")
+            .iter()
+            .map(|r| match r {
+                Role::Proposer(stage_num) => (*stage_num, PaxosRole::Prop(Proposing::default())),
+                Role::Acceptor(stage_num) => (*stage_num, PaxosRole::Acc(Accepting::default())),
+                Role::Learner(stage_num) => (*stage_num, PaxosRole::Learn(Learning)),
+            })
+            .collect()
+    }
+
+    pub fn proposer(&self, num: PaxosStage) -> PeerId {
+        self.ids_and_names()
+            .find_map(|(id, name)| {
+                self.peer_names
+                    .get(name)
+                    .and_then(|roles| roles.contains(&Role::Proposer(num)).then_some(id))
+            })
+            .expect("Should have a proposer")
     }
 }

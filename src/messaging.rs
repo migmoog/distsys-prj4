@@ -18,6 +18,7 @@ pub enum Message {
     // Sent by a peer once it establishes a connection
     Alive,
     Prepare(Proposal),
+    PrepareAck(Option<Proposal>),
 }
 
 // Message with an address
