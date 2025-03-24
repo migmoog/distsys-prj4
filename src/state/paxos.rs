@@ -28,13 +28,15 @@ pub struct Proposing {
     accept_acks: HashMap<PeerId, ProposalNum>,
     quorum_size: usize,
     chosen: bool,
+    pub stage: PaxosStage,
 }
 impl Proposing {
-    pub fn new(quorum_size: usize) -> Self {
+    pub fn new(quorum_size: usize, stage: PaxosStage) -> Self {
         Self {
             quorum_size,
             broadcasted_accept: false,
             chosen: false,
+            stage,
             ..Default::default()
         }
     }

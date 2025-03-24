@@ -1,6 +1,6 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
-use paxos::{Chooser, PaxosRole, PaxosStage, Value};
+use paxos::{Chooser, PaxosRole, Value};
 use tokio::io;
 
 use crate::{
@@ -15,19 +15,18 @@ pub struct Data {
     nexus: Nexus,
 
     // Paxos stuff
-    current_stage: PaxosStage,
-    stages: HashMap<PaxosStage, PaxosRole>,
-    log: VecDeque<Message>,
+    role: PaxosRole,
+    // Message to send and who its going to
+    log: VecDeque<(Message, Vec<PeerId>)>,
 }
 
 impl Data {
     pub fn new(peer_list: PeerList, nexus: Nexus) -> Self {
-        let stages = peer_list.establish_stages();
+        let role = peer_list.paxos_role();
         Self {
             peer_list,
             nexus,
-            current_stage: 1,
-            stages,
+            role,
             log: VecDeque::new(),
         }
     }
@@ -41,7 +40,7 @@ impl Data {
 
     /// Returns true if we are the proposer at the current stage of the system
     pub fn can_propose(&self) -> bool {
-        if let Some(PaxosRole::Prop(p)) = self.stages.get(&self.current_stage) {
+        if let PaxosRole::Prop(ref p) = self.role {
             !p.has_begun()
         } else {
             false
@@ -51,14 +50,14 @@ impl Data {
     /// Broadcasts a prepare message to all acceptors
     pub async fn propose(&mut self, v: Value) -> io::Result<()> {
         let mut to_send = None;
-        if let Some(PaxosRole::Prop(ref mut p)) = self.stages.get_mut(&self.current_stage) {
+        if let PaxosRole::Prop(ref mut p) = self.role {
             let msg = p.propose(v);
             msg.paxos_print(self.peer_list.id(), true, &p.current_prop());
-            to_send = Some(msg);
+            to_send = Some((msg, p.stage));
         }
 
-        if let Some(msg) = to_send {
-            for id in self.peer_list.acceptors(self.current_stage) {
+        if let Some((msg, stage)) = to_send {
+            for id in self.peer_list.acceptors(stage) {
                 self.send_msg(msg.clone(), id).await?;
             }
         }
@@ -67,41 +66,40 @@ impl Data {
 
     // checks the mailbox and does according data trickery
     pub fn tick(&mut self) {
-        let (Some(letter), Some(paxos_role)) = (
-            self.nexus.check_mailbox(),
-            self.stages.get_mut(&self.current_stage),
-        ) else {
+        let Some(letter) = self.nexus.check_mailbox() else {
             return;
         };
 
         let id = self.peer_list.id();
         let recmsg = letter.message();
-        match (recmsg, paxos_role) {
+        match (recmsg, &mut self.role) {
             (Message::Prepare(prop), PaxosRole::Acc(ref mut acc)) => {
                 recmsg.paxos_print(id, false, prop);
 
                 let msg = acc.prepare(prop, id);
-                self.log.push_back(msg);
+                self.log.push_back((msg, vec![letter.from()]));
             }
 
             (Message::PrepareAck(response), PaxosRole::Prop(ref mut prop)) => {
                 recmsg.paxos_print(id, false, &prop.current_prop());
 
                 if let Some(msg) = prop.acknowledge_prep(letter.from(), response.clone(), id) {
-                    self.log.push_back(msg);
+                    self.log
+                        .push_back((msg, self.peer_list.acceptors(prop.stage)));
                 }
             }
 
             (Message::Accept(prop), PaxosRole::Acc(ref mut acceptor)) => {
                 recmsg.paxos_print(id, false, prop);
                 let msg = acceptor.accept(prop, id);
-                self.log.push_back(msg);
+                self.log.push_back((msg, vec![letter.from()]));
             }
 
             (Message::AcceptAck { min_proposal }, PaxosRole::Prop(ref mut proposer)) => {
                 recmsg.paxos_print(id, false, &proposer.current_prop());
                 if let Some(msg) = proposer.acknowledge_accept(letter.from(), *min_proposal, id) {
-                    self.log.push_back(msg);
+                    self.log
+                        .push_back((msg, self.peer_list.acceptors_and_learners(proposer.stage)));
                 }
             }
 
@@ -114,31 +112,14 @@ impl Data {
     }
 
     pub async fn flush_log(&mut self) -> io::Result<()> {
-        let Some(msg) = self.log.pop_front() else {
+        let Some((msg, to_peers)) = self.log.pop_front() else {
             return Ok(());
         };
 
-        match &msg {
-            Message::PrepareAck(_) | Message::AcceptAck { .. } => {
-                self.send_msg(msg, self.peer_list.proposer(self.current_stage))
-                    .await?
-            }
-
-            Message::Accept(_) => {
-                for id in self.peer_list.acceptors(self.current_stage) {
-                    self.send_msg(msg.clone(), id).await?;
-                }
-            }
-
-            Message::Chosen(_) => {
-                for id in self.peer_list.acceptors_and_learners(self.current_stage) {
-                    self.send_msg(msg.clone(), id).await?;
-                }
-            }
-
-            Message::Prepare(_) => {}
-            _ => {}
+        for id in to_peers {
+            self.send_msg(msg.clone(), id).await?;
         }
+
         Ok(())
     }
 }

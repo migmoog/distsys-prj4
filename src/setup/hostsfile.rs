@@ -124,43 +124,33 @@ impl PeerList {
         self.peer_names.len() - 1
     }
 
-    pub fn establish_stages(&self) -> HashMap<PaxosStage, PaxosRole> {
-        self.peer_names
-            .get(&self.hostname)
-            .expect("Host in hostsfile")
-            .iter()
-            .map(|r| match r {
-                Role::Proposer(stage_num) => (
-                    *stage_num,
-                    PaxosRole::Prop(Proposing::new(self.acceptors(*stage_num).len())),
-                ),
-                Role::Acceptor(stage_num) => (*stage_num, PaxosRole::Acc(Accepting::default())),
-                Role::Learner(stage_num) => (*stage_num, PaxosRole::Learn(Learning)),
-            })
-            .collect()
-    }
-
-    pub fn proposer(&self, num: PaxosStage) -> PeerId {
-        self.ids_and_names()
-            .find_map(|(id, name)| {
-                self.peer_names
-                    .get(name)
-                    .and_then(|roles| roles.contains(&Role::Proposer(num)).then_some(id))
-            })
-            .expect("Should have a proposer")
-    }
-
     pub fn acceptors_and_learners(&self, num: PaxosStage) -> Vec<PeerId> {
+        // How could something so right feel so wrong
         self.peer_names
             .iter()
             .enumerate()
             .filter_map(move |(index, (_, roles))| {
-                if roles.contains(&Role::Acceptor(num)) || roles.contains(&Role::Learner(num)) {
-                    Some(index + 1)
-                } else {
-                    None
-                }
+                roles
+                    .iter()
+                    .any(|r| matches!(r, Role::Acceptor(n) | Role::Learner(n) if *n == num))
+                    .then_some(index + 1)
             })
             .collect()
+    }
+
+    pub fn paxos_role(&self) -> PaxosRole {
+        let initial_role = self
+            .peer_names
+            .get(&self.hostname)
+            .expect("Should have roles")
+            .get(0)
+            .unwrap();
+        match initial_role {
+            Role::Proposer(stage) => {
+                PaxosRole::Prop(Proposing::new(self.acceptors(*stage).len(), *stage))
+            }
+            Role::Learner(_) => PaxosRole::Learn(Learning),
+            Role::Acceptor(_) => PaxosRole::Acc(Accepting::default()),
+        }
     }
 }
