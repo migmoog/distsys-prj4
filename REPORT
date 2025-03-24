@@ -1,0 +1,35 @@
+This project is built atop the tokio runtime with the rust programming language.
+
+The Data Design consists of the main Data structure (src/state.rs). It has:
+ - a `PeerList` to read the hostfile and process the role of each peer in the paxos protocol
+ - a `Nexus`, which is a collection of TCP sockets for sending, and asynchronous threads for polling
+ - a `PaxosRole`, containing the state of the protocol for the respective peer
+ - a log, that contains messages to be sent and the corresponding peer id's of the recipients
+
+A PaxosRole is an enum that can be:
+ - Proposer
+ - Acceptor
+ - Learner
+
+A Proposal is a struct with:
+ - num: ProposalNumber
+ - value: Value
+
+All messages are in the Message enum (src/messaging.rs):
+ - Alive (for setup)
+ - Prepare(Proposal), sent by proposer as step 1 of paxos
+ - PrepareAck(Option<Proposal>), sent by acceptors to respond to Message::Prepare. The option will contain acceptedValue if the acceptor has already accepted
+ - Accept(Proposal), sent by proposer to its acceptors. Contains the proposal to be accepted
+ - AcceptAck {min_proposal: ProposalNumber}, sent by acceptors. Contains the minimum proposal number so the proposer can see if there was any rejection
+ - Chosen(Proposal), sent to all peers to signify there was a choice.
+
+Steps of the wrapper algorithm (not paxos) are:
+ 1. Parse hostsfile into PeerList
+ 2. Use PeerList to setup Nexus, send Message::Alive, then sleep for 2 seconds to allow other processes to activate
+ 3. begin main loop
+ MAIN LOOP
+ 4. check if the proposer is ready to propose, then do so
+ 5. tick() and check for any incoming messages
+ 6. Process those incoming messages, and fill the log with whatever response corresponds
+ 7. flush the log (send messages)
+ BACK TO BEGINNING OF MAIN LOOP
