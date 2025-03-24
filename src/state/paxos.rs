@@ -32,11 +32,13 @@ pub struct Proposing {
 }
 impl Proposing {
     pub fn new(quorum_size: usize, stage: PaxosStage) -> Self {
+        let num = stage as u64 - 1;
         Self {
             quorum_size,
             broadcasted_accept: false,
             chosen: false,
             stage,
+            num,
             ..Default::default()
         }
     }
@@ -73,6 +75,9 @@ impl Proposing {
         response: Option<Proposal>,
         id: PeerId,
     ) -> Option<Message> {
+        if self.chosen {
+            return None;
+        }
         self.prep_acks.insert(from, response);
 
         // if we receive from a majority
@@ -140,6 +145,14 @@ pub trait Chooser {
     fn accept_choice(&mut self, prop: &Proposal);
 }
 
+impl Chooser for Proposing {
+    fn accept_choice(&mut self, prop: &Proposal) {
+        self.num = prop.num;
+        self.value = Some(prop.value);
+        self.chosen = true;
+    }
+}
+
 #[derive(Default)]
 pub struct Accepting {
     min_proposal: ProposalNum,
@@ -157,7 +170,11 @@ impl Accepting {
     pub fn accept(&mut self, prop: &Proposal, id: PeerId) -> Message {
         if prop.num > self.min_proposal {
             self.min_proposal = prop.num;
-            self.accepted_prop = Some(prop.clone());
+            if let Some(ref mut prop) = self.accepted_prop {
+                prop.num = self.min_proposal;
+            } else {
+                self.accepted_prop = Some(prop.clone());
+            }
         }
         let msg = Message::AcceptAck {
             min_proposal: self.min_proposal,
@@ -168,15 +185,16 @@ impl Accepting {
     }
 }
 impl Chooser for Accepting {
-    fn accept_choice(&mut self, _prop: &Proposal) {
-        println!("Also chosen");
-    }
+    fn accept_choice(&mut self, _prop: &Proposal) {}
 }
 
-pub struct Learning;
+#[derive(Default)]
+pub struct Learning {
+    chosen: bool,
+}
 impl Chooser for Learning {
     fn accept_choice(&mut self, _prop: &Proposal) {
-        println!("Chosen");
+        self.chosen = true;
     }
 }
 
@@ -190,7 +208,7 @@ impl Chooser for PaxosRole {
         match self {
             Self::Acc(a) => a.accept_choice(prop),
             Self::Learn(l) => l.accept_choice(prop),
-            _ => {}
+            Self::Prop(p) => p.accept_choice(prop),
         }
     }
 }

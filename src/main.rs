@@ -25,6 +25,9 @@ async fn main() -> std::io::Result<()> {
     loop {
         if let Some(value) = arguments.proposal_value {
             if data.can_propose() {
+                if let Some(secs) = arguments.proposal_delay {
+                    sleep(Duration::from_secs(secs));
+                }
                 data.propose(value).await?;
             }
         }

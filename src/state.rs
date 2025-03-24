@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, thread::sleep, time::Duration};
 
 use paxos::{Chooser, PaxosRole, Value};
 use tokio::io;
@@ -98,8 +98,10 @@ impl Data {
             (Message::AcceptAck { min_proposal }, PaxosRole::Prop(ref mut proposer)) => {
                 recmsg.paxos_print(id, false, &proposer.current_prop());
                 if let Some(msg) = proposer.acknowledge_accept(letter.from(), *min_proposal, id) {
-                    self.log
-                        .push_back((msg, self.peer_list.acceptors_and_learners(proposer.stage)));
+                    self.log.push_back((
+                        msg,
+                        self.peer_list.ids_and_names().map(|(id, _)| id).collect(),
+                    ));
                 }
             }
 

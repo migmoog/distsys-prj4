@@ -7,13 +7,7 @@ use nom::{
     sequence::separated_pair,
     IResult, Parser,
 };
-use std::{
-    collections::{HashMap, VecDeque},
-    fs::File,
-    hash::Hash,
-    io::Read,
-    path::PathBuf,
-};
+use std::{collections::VecDeque, fs::File, io::Read, path::PathBuf};
 
 use crate::{
     messaging::dist_types::PeerId,
@@ -149,7 +143,7 @@ impl PeerList {
             Role::Proposer(stage) => {
                 PaxosRole::Prop(Proposing::new(self.acceptors(*stage).len(), *stage))
             }
-            Role::Learner(_) => PaxosRole::Learn(Learning),
+            Role::Learner(_) => PaxosRole::Learn(Learning::default()),
             Role::Acceptor(_) => PaxosRole::Acc(Accepting::default()),
         }
     }
